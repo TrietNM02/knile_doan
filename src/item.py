@@ -12,10 +12,17 @@ class Item:
 
     def use(self, player):
         """Hàm xử lý khi sử dụng vật phẩm này. Trả về True nếu dùng thành công."""
-        if self.type == 'consumable':
+
+        if self.type == 'weapon':
+            player.selected_weapon = self.id
+            print(f"⚔️ Đã trang bị vũ khí: {self.name}")
+            return False
+        
+        elif self.type == 'consumable':
             if self.id == 'potion_red':
                 # Hồi máu cho Player nhưng không vượt quá máu tối đa
-                max_health = player.stats['health']
+                # (dùng max_health đã cộng % bonus từ Cây Kỹ Năng nếu có)
+                max_health = getattr(player, 'max_health', player.stats['health'])
                 if player.health >= max_health:
                     print("Máu đã đầy, không thể sử dụng!")
                     return False
@@ -26,7 +33,7 @@ class Item:
                 
             elif self.id == 'potion_energy':
                 # Hồi năng lượng cho Player
-                max_energy = player.stats['energy']
+                max_energy = getattr(player, 'max_energy', player.stats['energy'])
                 if player.energy >= max_energy:
                     print("Năng lượng đã đầy!")
                     return False

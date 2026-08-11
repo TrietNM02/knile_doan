@@ -3,10 +3,11 @@ import random
 from settings import *
 from entity import Entity
 from spritesheet import load_spritesheet
+from particle import ParticleEffect
 
 
 class Enemy(Entity):
-    def __init__(self, monster_name, pos, groups, collision_sprites, player):
+    def __init__(self, monster_name, pos, groups, collision_sprites, player, explosion_frames=None):
         super().__init__(groups)
         self.monster_name = monster_name
         self.collision_sprites = collision_sprites
@@ -19,6 +20,9 @@ class Enemy(Entity):
         self.attack_damage = info['damage']
         self.attack_type = info['attack_type']
         self.attack_sound = info['attack_sound']
+
+        # particles
+        self.explosion_frames = info.get('particle_frames', [])
 
         # Move & Grid setup
         self.speed = info['speed'] * 50
@@ -36,6 +40,7 @@ class Enemy(Entity):
         self.frame = 0
         self.flip = False
         self.z = LAYERS['main']
+        self.scale_image_sheet = info.get('scale', 2)
 
         self.flip_on_left = info.get('flip_on_left', False)
         self.flip_on_right = info.get('flip_on_right', False)
@@ -70,7 +75,7 @@ class Enemy(Entity):
             for action, (row_index, total_frames) in animation_config.items():
                 temp_img_list = []
                 for frame_index in range(total_frames):
-                    frame_surf = load_spritesheet(raw_image, self.monster_size, self.monster_size, row_index, frame_index, 2)
+                    frame_surf = load_spritesheet(raw_image, self.monster_size, self.monster_size, row_index, frame_index, self.scale_image_sheet)
                     temp_img_list.append(frame_surf)
                 self.animations_dict[action] = temp_img_list
         else:
@@ -80,7 +85,7 @@ class Enemy(Entity):
                 try:
                     raw_image = pygame.image.load(full_path).convert_alpha()
                     for frame_index in range(total_frames):
-                        frame_surf = load_spritesheet(raw_image, self.monster_size, self.monster_size, row_index, frame_index, 2)
+                        frame_surf = load_spritesheet(raw_image, self.monster_size, self.monster_size, row_index, frame_index, self.scale_image_sheet)
                         temp_img_list.append(frame_surf)
                     self.animations_dict[action] = temp_img_list
                 except FileNotFoundError:
@@ -210,27 +215,36 @@ class Enemy(Entity):
             self.facing = 'up'
 
     def animate(self, dt):
-        action_key = 'die' if self.status == 'die' else f'{self.status}_{self.facing}'
-        speed_multiplier = 8 if self.status == 'die' else (16 if self.status == 'attack' else 5)
+        action_key = f"{self.status}_{self.facing}"
         
+        # Safe-guard: Nếu không có key thích hợp, fallback về idle_down
+        if action_key not in self.animations_dict:
+            action_key = 'die' if 'die' in self.animations_dict else f'idle_{self.facing}'
+            if action_key not in self.animations_dict:
+                action_key = list(self.animations_dict.keys())[0]
+
+        speed_multiplier = 8 if self.status == 'die' else (16 if self.status == 'attack' else 12)
         self.frame += speed_multiplier * dt
 
-        if self.frame >= len(self.animations_dict[action_key]):
+        frames = self.animations_dict[action_key]
+
+        if self.frame >= len(frames):
             if self.status == 'die':
                 self.kill()
                 return
             elif self.status == 'attack':
                 self.status = 'idle'
                 self.has_attacked = False
-                self.frame = 0
+                self.frame = 0.0
             else:
-                self.frame = 0
+                self.frame = 0.0
 
-        current_image = self.animations_dict[action_key][int(self.frame)]
+        current_image = frames[min(int(self.frame), len(frames) - 1)]
         self.image = pygame.transform.flip(current_image, True, False) if self.flip else current_image
 
-        self.rect.centerx = self.pos.x
-        self.rect.bottom = self.pos.y + (self.tile_size / 2)
+        # Cập nhật vị trí hiển thị theo hitbox chính xác
+        self.rect.centerx = self.hitbox.centerx
+        self.rect.bottom = self.hitbox.bottom + (self.tile_size // 2 - self.hitbox.height // 2)
 
     def move(self, dt):
         if not self.is_moving:
@@ -264,31 +278,62 @@ class Enemy(Entity):
             return
         self.status = 'walk' if self.is_moving else 'idle'
 
-    def damaged(self):
-        if self.alive:
-            self.health -= 2
-        self.check_death()
+    def damaged(self, amount = 2):
+        if not self.alive:
+            return
+            
+        self.health -= amount
+        if self.health <= 0:
+            self.die()
 
-    def check_death(self):
-        if self.health <= 0 and self.alive:
-            self.alive = False
-            self.frame = 0
+    def die(self):
+        """Xử lý sự kiện chết: Nổ bùm chíu + Biến mất chuẩn xịn"""
+        self.alive = False
+        self.direction = pygame.math.Vector2()
+        self.is_moving = False
+
+        # 🟡 LẤY TIỀN THƯỞNG VÀ KÍCH HOẠT VIRTUAL EFFECT (VFX)
+        gold_reward = monster_data.get(self.monster_name, {}).get('gold', 10)
+        
+        if hasattr(self.player, 'add_gold'):
+            # Truyền vị trí vị trí quái để spawn hiệu ứng số chữ bay lên
+            death_pos = self.rect.center
+            self.player.add_gold(gold_reward, spawn_vfx_pos=death_pos)
+
+        # 🟢 THƯỞNG SKILL POINT + HỌC SKILL nếu đây là BOSS (nhận diện qua
+        # get_occupied_tiles — hàm chỉ có ở class Boss, quái thường không có).
+        if hasattr(self, 'get_occupied_tiles') and hasattr(self.player, 'on_boss_defeated'):
+            self.player.on_boss_defeated(self.monster_name)
+
+        # 1. Tắt va chạm với Player ngay lập tức
+        if self in self.collision_sprites:
+            self.collision_sprites.remove(self)
+
+        # 2. PHÂN LOẠI XỬ LÝ CHẾT
+        if 'die' in self.animations_dict:
+            # 🟢 Trường hợp 1: Có animation 'die' -> Chuyển status để diễn hoạt ảnh gục ngã
             self.status = 'die'
-            self.hitbox = pygame.Rect(0, 0, 0, 0)
-            self.direction = pygame.math.Vector2()
+            self.frame = 0.0
+        else:
+            # 🔴 Trường hợp 2: KHÔNG CÓ animation 'die' -> Nổ Particle rồi biến mất ngay
+            target_groups = self.groups()
+            if hasattr(self.player, 'level'):
+                target_groups = self.player.level.all_sprites
 
+            # Lấy frames nổ (nếu rỗng thì tự động gọi hàm load)
+            frames = self.explosion_frames if self.explosion_frames else load_particle_frames()
+            if frames:
+                try:
+                    ParticleEffect(self.rect.center, frames, target_groups)
+                except Exception as e:
+                    print(f"[LỖI PARTICLE]: {e}")
+
+            # Biến mất khỏi màn hình ngay lập tức
+            self.kill()
+ 
     def update(self, dt):
         self.animate(dt)
         if self.alive:
             self.handle_attack()
             self.move(dt)
             self.update_status()
-
-    
-        
-
-
-    
-
-    
-        

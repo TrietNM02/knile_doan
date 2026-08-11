@@ -1,6 +1,9 @@
 import pygame
 import sys
 from settings import *
+from save_manager import SaveManager
+from ui_system import UIManager
+from settings_overlay import SettingsOverlay
 
 class Menu:
     def __init__(self, screen):
@@ -13,8 +16,11 @@ class Menu:
         self.buttons = []
         self.create_buttons()
 
+        # 🟢 Tạo UIManager riêng cho Main Menu
+        self.ui_manager = UIManager()
+        self.ui_manager.register('settings', SettingsOverlay(self.ui_manager))
+
     def create_buttons(self):
-        # Thiết lập kích thước và vị trí các nút ở chính giữa màn hình
         screen_center_x = SCREEN_WIDTH // 2
         start_y = 250
         button_width = 220
@@ -27,51 +33,62 @@ class Menu:
             self.buttons.append({
                 'text': text,
                 'rect': rect,
-                'action': text.lower().replace(' ', '_') # Tạo id hành động: 'new_game', 'load_game', ...
+                'action': text.lower().replace(' ', '_')
             })
 
     def draw(self):
-        # Nền menu
         self.screen.fill((20, 20, 30))
 
-        # Tiêu đề game
         title_surf = self.title_font.render("KNILE", True, (255, 255, 255))
         title_rect = title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120))
         self.screen.blit(title_surf, title_rect)
 
-        # Vẽ các nút
         mouse_pos = pygame.mouse.get_pos()
         for button in self.buttons:
-            # Effect khi di chuột vào nút (Hover)
             is_hover = button['rect'].collidepoint(mouse_pos)
             bg_color = (70, 70, 90) if is_hover else (40, 40, 50)
             text_color = (255, 215, 0) if is_hover else (200, 200, 200)
 
-            # Vẽ khung nút
             pygame.draw.rect(self.screen, bg_color, button['rect'], border_radius=8)
             pygame.draw.rect(self.screen, (100, 100, 120), button['rect'], width=2, border_radius=8)
 
-            # Vẽ chữ trên nút
             text_surf = self.font.render(button['text'], True, text_color)
             text_rect = text_surf.get_rect(center=button['rect'].center)
             self.screen.blit(text_surf, text_rect)
 
+        # 🟢 Vẽ UI Manager nếu đang mở Settings
+        if self.ui_manager.is_menu_open():
+            self.ui_manager.draw()
+
+    def update(self, dt):
+        # Update UI Manager (nếu dùng hiệu ứng animation)
+        self.ui_manager.update(dt)
+
     def handle_event(self, event):
-        """Xử lý sự kiện click chuột trong Menu"""
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1: # Click chuột trái
+        # Nếu bảng Settings đang mở, nhường event cho UIManager xử lý (bao gồm click nút BACK)
+        if self.ui_manager.is_menu_open():
+            self.ui_manager.handle_event(event)
+            return None
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mouse_pos = event.pos
             for button in self.buttons:
                 if button['rect'].collidepoint(mouse_pos):
                     action = button['action']
                     
                     if action == 'new_game':
-                        return 'start_game' # Chuyển trạng thái để vào Game
+                        return 'start_game'
                     
                     elif action == 'load_game':
-                        print("Load Game clicked (Chức năng chưa phát triển)")
+                        save_data = SaveManager.load_game()
+                        if save_data:
+                            return {'action': 'load_game', 'data': save_data}
+                        else:
+                            print("[MENU]: Không tìm thấy file lưu game!")
                         
                     elif action == 'settings':
-                        print("Settings clicked (Chức năng chưa phát triển)")
+                        # Mở overlay settings
+                        self.ui_manager.open('settings')
                         
                     elif action == 'quit':
                         pygame.quit()

@@ -1,143 +1,207 @@
 import pygame
-
 from settings import *
-
 from spritesheet import load_spritesheet
-from timers    import Timer
-from entity    import Entity
-from weapon    import Weapon
-from item      import Item
+from timers import Timer
+from entity import Entity
+from weapon import Weapon
 from inventory import Inventory
+from skill import SkillManager
+from floating_text import FloatingText
 
 
 class Player(Entity):
     def __init__(self, pos, group, collision_sprites, tree_sprites, enemy_sprites):
         super().__init__(group)
 
-        # animation
+        self.spawn_pos = pygame.math.Vector2(pos)
+
+        # ---------------------------------------------------------------------
+        # 1. GRAPHIC & ANIMATION SETUP
+        # ---------------------------------------------------------------------
         self.state = 'idle'
         self.facing = 'down'
         self.action = f'{self.state}_{self.facing}'
+        self.frame = 0
         self.flip = False
-        self.import_spritesheet()
-
-        self.image = self.animations_dict[self.action][self.frame]
-        self.rect = self.image.get_rect(center = pos)
         self.z = LAYERS['main']
 
-        # collision & Grid setup
+        self.import_spritesheet()
+        self.image = self.animations_dict[self.action][self.frame]
+        self.rect = self.image.get_rect(center=pos)
+
+        # ---------------------------------------------------------------------
+        # 2. HITBOX & GRID SETUP
+        # ---------------------------------------------------------------------
         self.tile_size = 48
-        self.hitbox = pygame.Rect(0, 0, 36, 36)
-        self.hitbox.center = pos
-        
-        # Đồng bộ rect (hình ảnh) khớp với đáy của hitbox
-        self.rect.centerx = self.hitbox.centerx
-        self.rect.bottom = self.hitbox.bottom
-        
+        self.hitbox = pygame.Rect(0, 0, 24, 24)
+        self.hitbox.center = (pos)
+        self.update_rect_to_hitbox()
+
         self.collision_sprites = collision_sprites
-        self.pos = pygame.math.Vector2(self.hitbox.center)
-
-        # moving
-        self.is_moving = False
-        self.target_pos = pygame.math.Vector2(self.pos)
-
-        # Timer
-        self.timers = {
-            'weapon use': Timer(200, self.weapon_use), # Giảm timer xuống để đòn đánh dứt khoát hơn
-            'weapon switch': Timer(250),
-            'turn_cooldown': Timer(150),
-        }
-
-        # weapons
-        self.weapons = ['sword', 'lance', 'axe']
-        self.weapon_index = 0
-        self.selected_weapon = self.weapons[self.weapon_index]
-        self.can_switch_weapon = True
-
-        # interaction
-        self.attacking = False
         self.tree_sprites = tree_sprites
         self.enemy_sprites = enemy_sprites
         self.level = None
 
-        # stats
+        # ---------------------------------------------------------------------
+        # 3. TRẠNG THÁI DI CHUYỂN & TIMER
+        # ---------------------------------------------------------------------
+        self.pos = pygame.math.Vector2(self.hitbox.center)
+        self.target_pos = pygame.math.Vector2(self.pos)
+        self.is_moving = False
+        self.is_casting = False
+        self.attacking = False
+        self.steps = 0
+
+        self.timers = {
+            'weapon use': Timer(200, self.weapon_use),
+            'turn_cooldown': Timer(150),
+        }
+
+        # ---------------------------------------------------------------------
+        # 4. HỆ THỐNG SKILL (ONEBIT)
+        # ---------------------------------------------------------------------
+        self.skill_manager = SkillManager(self, skill_data, SKILL_FUSION_RECIPES)
+        self.skill_slots = {1: None, 2: None, 3: None, 4: None}
+        self.unlocked_active_skills = set()
+        self.skill_points = 0
+        self.unlocked_skill_nodes = {'root'}
+
+        # ---------------------------------------------------------------------
+        # 5. CHI TIẾT CHỈ SỐ & TÚI ĐỒ (STATS & INVENTORY)
+        # ---------------------------------------------------------------------
         self.stats = {
             'health': 100,
             'energy': 60,
             'attack': 10,
             'magic': 4,
-            'speed': 300 # Đẩy tốc độ trượt ô lên 300 cho mượt chuẩn OneBit
+            'speed': 300
         }
         self.health = self.stats['health'] * 0.5
         self.energy = self.stats['energy'] * 0.8
         self.exp = 123
+        self._gold = 0
 
-        # inventory
+        self.vfx_font = pygame.font.Font(UI_FONT, 18)
+        self.selected_weapon = 'sword'
+
         self.inventory = Inventory(total_slots=16)
+        self.add_item('sword', 1)
+        self.add_item('lance', 1)
+        self.add_item('axe', 1)
         self.add_item('potion_red', 2)
 
-    def weapon_use(self):
-        if self.selected_weapon == 'sword':
-            interaction_pos = self.get_interaction_pos()
+        self.inventory.equip_weapon_from_slot(0, self)
 
-            for tree in self.tree_sprites.sprites():
-                if hasattr(tree, 'hitbox'):
-                    if tree.hitbox.collidepoint(interaction_pos):
-                        tree.damaged()
+    def update_rect_to_hitbox(self):
+        """ Căn chỉnh vị trí hình ảnh ăn theo hitbox (tránh lặp code)"""
+        self.rect.centerx = self.hitbox.centerx
+        self.rect.bottom = self.hitbox.bottom
 
-            for enemy in self.enemy_sprites.sprites():
-                if hasattr(enemy, 'hitbox') and enemy.alive:
-                    if enemy.hitbox.collidepoint(interaction_pos):
-                        enemy.damaged()
+    # -------------------------------------------------------------------------
+    # PROPERTIES
+    # -------------------------------------------------------------------------
+    @property
+    def gold(self) -> int:
+        return self._gold
 
-        elif self.selected_weapon == 'lance':
-            direction_str = self.action.split('_')[1]
-            tile_size = self.tile_size
-            lance_rect = self.hitbox.copy() 
+    @property
+    def total_attack_damage(self):
+        base_attack = self.stats.get('attack', 10)
+        current_weapon = getattr(self, 'selected_weapon', 'sword')
+        weapon_damage = weapon_data.get(current_weapon, {}).get('damage', 0)
 
-            if direction_str == 'right':
-                lance_rect.width = tile_size * 1
-                lance_rect.height = tile_size * 3
-                lance_rect.left = self.hitbox.right + tile_size
-                lance_rect.centery = self.hitbox.centery
+        raw_total = base_attack + weapon_damage
+        bonus_pct = self.get_skill_tree_bonus('weapon_dmg_pct')
+        return int(raw_total * (1 + bonus_pct))
 
-            elif direction_str == 'left':
-                lance_rect.width = tile_size * 1
-                lance_rect.height = tile_size * 3
-                lance_rect.right = self.hitbox.left - tile_size
-                lance_rect.centery = self.hitbox.centery
+    @property
+    def max_health(self):
+        bonus_pct = self.get_skill_tree_bonus('max_hp_pct')
+        return int(self.stats.get('health', 100) * (1 + bonus_pct))
 
-            elif direction_str == 'down':
-                lance_rect.width = tile_size * 3
-                lance_rect.height = tile_size * 1
-                lance_rect.top = self.hitbox.bottom + tile_size
-                lance_rect.centerx = self.hitbox.centerx
+    @property
+    def max_energy(self):
+        bonus_pct = self.get_skill_tree_bonus('max_energy_pct')
+        return int(self.stats.get('energy', 60) * (1 + bonus_pct))
 
-            elif direction_str == 'up':
-                lance_rect.width = tile_size * 3
-                lance_rect.height = tile_size * 1
-                lance_rect.bottom = self.hitbox.top - tile_size - 15
-                lance_rect.centerx = self.hitbox.centerx
+    @property
+    def game_sound(self):
+        if self.level and hasattr(self.level, 'game') and hasattr(self.level.game, 'sound_manager'):
+            return self.level.game.sound_manager
+        return None
 
-            if self.groups():
-                Weapon(lance_rect, direction_str, self.groups()[0])
+    # -------------------------------------------------------------------------
+    # QUẢN LÝ TIỀN TỆ & CÂY KỸ NĂNG
+    # -------------------------------------------------------------------------
+    def add_gold(self, amount: int, spawn_vfx_pos=None) -> int:
+        if amount <= 0:
+            return self._gold
+            
+        self._gold += amount
 
-            for enemy in self.enemy_sprites.sprites():
-                if hasattr(enemy, 'hitbox') and enemy.alive:
-                    if lance_rect.colliderect(enemy.hitbox):
-                        enemy.damaged()
+        if spawn_vfx_pos and self.level and hasattr(self.level, 'all_sprites'):
+            FloatingText(
+                text=f"+{amount} G", 
+                pos=spawn_vfx_pos, 
+                color=(255, 215, 0), 
+                groups=self.level.all_sprites,
+                font=self.vfx_font
+            )
+        return self._gold
 
-            self.debug_lance_rect = lance_rect
-        
-        self.action = self.action.replace('attack_', 'idle_')
+    def spend_gold(self, amount: int) -> bool:
+        if 0 < amount <= self._gold:
+            self._gold -= amount
+            return True
+        return False
 
-        # Gọi lượt đi cho quái khi chém xong
-        self.end_turn()
+    def get_skill_tree_bonus(self, effect_type):
+        total = 0
+        for node_id in self.unlocked_skill_nodes:
+            node = skill_tree_data.get(node_id)
+            if node and node.get('effect_type') == effect_type:
+                total += node.get('effect_value', 0)
+        return total
 
-    def get_interaction_pos(self):
-        direction_str = self.action.split('_')[1]
-        return self.pos + PLAYER_WEAPON_OFFSET[direction_str]
+    def unlock_skill_node(self, node_id):
+        node = skill_tree_data.get(node_id)
+        if not node:
+            return False, "Node không tồn tại"
+        if node_id in self.unlocked_skill_nodes:
+            return False, "Đã mở khoá rồi"
 
+        parent_id = node.get('parent')
+        if parent_id and parent_id not in self.unlocked_skill_nodes:
+            return False, "Cần mở khoá node trước đó trước"
+
+        cost = node.get('cost', 0)
+        if self.skill_points < cost:
+            return False, "Không đủ điểm Kỹ Năng"
+
+        self.skill_points -= cost
+        self.unlocked_skill_nodes.add(node_id)
+        return True, f"Đã mở khoá {node.get('name', node_id)}!"
+
+    def on_boss_defeated(self, monster_name):
+        self.skill_points += 3
+        reward_skill = BOSS_SKILL_REWARDS.get(monster_name)
+        if reward_skill and reward_skill not in self.unlocked_active_skills:
+            self.unlocked_active_skills.add(reward_skill)
+            for slot_num in sorted(self.skill_slots.keys()):
+                if self.skill_slots[slot_num] is None:
+                    self.skill_slots[slot_num] = reward_skill
+                    break
+
+    def set_skill_slot(self, slot_number, skill_name):
+        if slot_number not in self.skill_slots:
+            return None
+        old_skill = self.skill_slots.get(slot_number)
+        self.skill_slots[slot_number] = skill_name
+        return old_skill
+
+    # -------------------------------------------------------------------------
+    # HÀM XỬ LÝ VŨ KHÍ & INVENTORY
+    # -------------------------------------------------------------------------
     def add_item(self, item_id, amount=1):
         self.inventory.add_item(item_id, ITEM_DATABASE, amount)
 
@@ -152,7 +216,46 @@ class Player(Entity):
 
     def damaged(self, amount):
         self.health -= amount
+        if self.health <= 0:
+            self.respawn()
 
+    def respawn(self):
+        self.health = self.max_health
+        self.energy = self.max_energy
+        self.pos = pygame.math.Vector2(self.spawn_pos)
+        self.target_pos = pygame.math.Vector2(self.spawn_pos)
+        self.hitbox.center = (self.pos)
+        self.update_rect_to_hitbox()
+        self.is_moving = False
+        self.state = 'idle'
+        self.action = f'{self.state}_{self.facing}'
+        self.frame = 0
+
+    def weapon_use(self):
+        if self.groups():
+            w = Weapon(self, self.selected_weapon, self.groups()[0])
+            if self.selected_weapon == 'lance':
+                self.debug_lance_rect = w.rect
+
+        self.action = self.action.replace('attack_', 'idle_')
+        self.end_turn()
+
+    def trigger_attack(self):
+        self.timers['weapon use'].activate()
+        self.frame = 0
+        self.state = 'attack'
+        self.attacking = True
+
+        if self.game_sound:
+            self.game_sound.play_sfx('attack')
+
+    def get_interaction_pos(self):
+        direction_str = self.action.split('_')[1]
+        return self.pos + PLAYER_WEAPON_OFFSET[direction_str]
+
+    # -------------------------------------------------------------------------
+    # ANIMATION
+    # -------------------------------------------------------------------------
     def import_spritesheet(self):
         sheet_path = '../assets/characters/player/player.png'
         raw_image = pygame.image.load(sheet_path)
@@ -184,6 +287,7 @@ class Player(Entity):
     def animate(self, dt):
         speed_multiplier = 16 if 'attack' in self.action else 6
         self.frame += speed_multiplier * dt
+        
         if self.frame >= len(self.animations_dict[self.action]):
             if 'attack' in self.action:
                 self.frame = len(self.animations_dict[self.action]) - 1
@@ -192,25 +296,25 @@ class Player(Entity):
 
         current_image = self.animations_dict[self.action][int(self.frame)]
         self.image = pygame.transform.flip(current_image, True, False) if self.flip else current_image
+        self.update_rect_to_hitbox()
 
-        self.rect.centerx = self.hitbox.centerx
-        self.rect.bottom = self.hitbox.bottom
-
-    def trigger_attack(self):
-        """Hàm dùng chung để kích hoạt tấn công dứt khoát"""
-        self.timers['weapon use'].activate()
-        self.direction = pygame.math.Vector2()
-        self.frame = 0
-        self.state = 'attack'
-        self.attacking = True
-
+    # -------------------------------------------------------------------------
+    # INPUT
+    # -------------------------------------------------------------------------
     def input(self):
-        if self.is_moving or self.timers['weapon use'].active or self.timers['turn_cooldown'].active:
+        if (self.is_moving or 
+            self.is_casting or 
+            self.timers['weapon use'].active or 
+            self.timers['turn_cooldown'].active):
+            return
+
+        camera_offset = self.level.all_sprites.offset if self.level else pygame.math.Vector2()
+        if self.skill_manager.handle_input(camera_offset):
             return
 
         keys = pygame.key.get_just_pressed()
 
-        # 1. ĐẤM THỦ CÔNG (SPACE)
+        # Space -> Đánh
         if keys[pygame.K_SPACE]:
             if not self.attacking and not self.timers['weapon use'].active:
                 self.trigger_attack()
@@ -218,18 +322,21 @@ class Player(Entity):
         else:
             self.attacking = False
 
-        # 2. ĐỔI VŨ KHÍ & DÙNG ITEM
-        if keys[pygame.K_q] and not self.timers['weapon switch'].active:
-            self.timers['weapon switch'].activate()
-            self.weapon_index = (self.weapon_index + 1) % len(self.weapons)
-            self.selected_weapon = self.weapons[self.weapon_index]
-
+        # Phím H -> Dùng bình máu
         if keys[pygame.K_h]:
             self.use_item('potion_red')
 
-        # 3. DI CHUYỂN / BUMP ATTACK (ONEBIT ADVENTURE STYLE)
-        input_dir = pygame.math.Vector2()
+        # Phím 1-4 -> Skill
+        slot_keys = {1: pygame.K_1, 2: pygame.K_2, 3: pygame.K_3, 4: pygame.K_4}
+        for slot_num, key_const in slot_keys.items():
+            if keys[key_const]:
+                active_skill = self.skill_manager.get_active_skill_for_slot(slot_num)
+                if active_skill:
+                    self.skill_manager.start_aiming(active_skill)
+                break
 
+        # WASD Di chuyển
+        input_dir = pygame.math.Vector2()
         if keys[pygame.K_w]:
             input_dir.y = -1
             self.facing = 'up'
@@ -247,40 +354,49 @@ class Player(Entity):
             self.facing = 'right'
             self.flip = False
 
-        # Nếu người chơi bấm phím điều hướng
+        # Bump Attack / Move
         if input_dir.magnitude() > 0:
             potential_target = self.pos + input_dir * self.tile_size
+            target_gx = int(potential_target.x // self.tile_size)
+            target_gy = int(potential_target.y // self.tile_size)
 
-            # 🟢 CHECK TẤN CÔNG BẰNG DI CHUYỂN (BUMP ATTACK): Đâm thẳng vào quái
             enemy_to_attack = None
             for enemy in self.enemy_sprites.sprites():
                 if enemy.alive:
-                    if (enemy.pos == potential_target or 
-                        (hasattr(enemy, 'target_pos') and enemy.target_pos == potential_target)):
-                        enemy_to_attack = enemy
-                        break
+                    if hasattr(enemy, 'get_occupied_tiles'):
+                        boss_tiles = enemy.get_occupied_tiles(enemy.grid_x, enemy.grid_y)
+                        if (target_gx, target_gy) in boss_tiles:
+                            enemy_to_attack = enemy
+                            break
+                    else:
+                        if (enemy.pos == potential_target or 
+                            (hasattr(enemy, 'target_pos') and enemy.target_pos == potential_target)):
+                            enemy_to_attack = enemy
+                            break
 
-            # Nếu ô phía trước có Quái -> Đứng yên tại chỗ và TẠNG NÓ MỘT CÚ
             if enemy_to_attack:
                 self.trigger_attack()
+                is_boss = hasattr(enemy_to_attack, 'get_occupied_tiles')
+                bonus_pct = self.get_skill_tree_bonus('boss_dmg_bonus_pct')
+                final_dmg = int(self.total_attack_damage * (1 + bonus_pct)) if is_boss else self.total_attack_damage
+                enemy_to_attack.damaged(final_dmg)
                 return
 
-            # CHECK TƯỜNG/VẬT CẢN MAP
+            # Collision Check
             map_blocking = hasattr(self, 'check_future_collision') and self.check_future_collision(potential_target)
             if map_blocking:
                 self.is_moving = False
-                self.direction = pygame.math.Vector2()
             else:
-                # Ô trống -> Tiến bước sang ô đó
-                self.direction = input_dir
                 self.target_pos = potential_target
                 self.is_moving = True
 
+    # -------------------------------------------------------------------------
+    # UPDATE LOGIC
+    # -------------------------------------------------------------------------
     def move(self, dt):
         if not self.is_moving:
             return
 
-        # Tính toán trượt ô mượt mà
         to_target = self.target_pos - self.pos
         distance = to_target.magnitude()
         move_distance = self.stats['speed'] * dt 
@@ -288,25 +404,36 @@ class Player(Entity):
         if move_distance >= distance:
             self.pos = pygame.math.Vector2(self.target_pos)
             self.is_moving = False
-            self.direction = pygame.math.Vector2()
-            
-            # 🟢 ĐIỂM CHỐT: Đi xong 1 ô -> Gọi lượt cho Quái phản công ngay!
             self.end_turn()
         else:
             self.pos += to_target.normalize() * move_distance
 
-        # Đồng bộ hitbox vật lý và rect ảnh
         self.hitbox.centerx = round(self.pos.x)
         self.hitbox.centery = round(self.pos.y)
-        self.rect.centerx = self.hitbox.centerx
-        self.rect.bottom = self.hitbox.bottom
+        self.update_rect_to_hitbox()
 
     def end_turn(self):
-        """Kích hoạt khoảng chờ lượt và gọi lượt đi cho Quái"""
-        self.timers['turn_cooldown'].activate() # Kích hoạt khóa phím 150ms
-        
-        if self.level and hasattr(self.level, 'check_enemy_turns'):
-            self.level.check_enemy_turns()
+        self.steps += 1
+        self.timers['turn_cooldown'].activate()
+        self.skill_manager.update_cooldowns()
+
+        hp_regen_pct = self.get_skill_tree_bonus('hp_regen_pct_per_turn')
+        if hp_regen_pct > 0:
+            self.health = min(self.max_health, self.health + self.max_health * hp_regen_pct)
+
+        energy_regen = self.get_skill_tree_bonus('energy_regen_flat_per_turn')
+        if energy_regen > 0:
+            self.energy = min(self.max_energy, self.energy + energy_regen)
+
+        if hasattr(self, 'active_zones'):
+            for zone in self.active_zones[:]:
+                if zone.alive():
+                    zone.on_turn_end()
+                else:
+                    self.active_zones.remove(zone)
+
+        if self.level and hasattr(self.level, 'end_player_turn'):
+            self.level.end_player_turn()
 
     def update_status(self):
         if self.timers['weapon use'].active:
@@ -318,14 +445,12 @@ class Player(Entity):
         if self.action != new_action:
             self.action = new_action
 
-    def update_timer(self):
+    def update(self, dt):
+        self.input()
+        
         for timer in self.timers.values():
             timer.update()
 
-    def update(self, dt):
-        self.input()
-        self.update_timer()
-        self.get_interaction_pos()
         self.move(dt)
         self.update_status()
         self.animate(dt)

@@ -1,0 +1,53 @@
+{
+    "level": 1,
+    "player": {
+        "health": 100,
+        "energy": 60,
+        "pos_x": 2280.0,
+        "pos_y": 2568.0,
+        "steps": 284,
+        "exp": 123,
+        "skill_points": 12,
+        "skill_slots": {
+            "1": null,
+            "2": null,
+            "3": "flame_slam",
+            "4": "water_spout"
+        },
+        "unlocked_active_skills": [
+            "waterball",
+            "wind_blast",
+            "jump_stomp",
+            "fireball"
+        ],
+        "unlocked_skill_nodes": [
+            "root"
+        ]
+    },
+    "enemies": [
+        {
+            "name": "slime",
+            "grid_x": 55,
+            "grid_y": 11,
+            "pos_x": 2664,
+            "pos_y": 552,
+            "health": 25
+        },
+        {
+            "name": "slime",
+            "grid_x": 46,
+            "grid_y": 13,
+            "pos_x": 2232,
+            "pos_y": 648,
+            "health": 50
+        },
+        {
+            "name": "slime",
+            "grid_x": 48,
+            "grid_y": 15,
+            "pos_x": 2328,
+            "pos_y": 744,
+            "health": 50
+        }
+    ]
+}

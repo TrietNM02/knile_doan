@@ -14,6 +14,37 @@ class Generic(pygame.sprite.Sprite):
             self.hitbox = self.rect.copy().inflate((-self.rect.width * 0.2, -self.rect.height * 0.75))
             self.hitbox.bottom = self.rect.bottom - 10
 
+
+class WaterFoam(Generic):
+    def __init__(self, pos, frames, groups):
+        self.frames = frames
+        self.frame_index = 0
+        self.animation_speed = 12
+
+        super().__init__(
+            pos = pos, 
+            surf = self.frames[self.frame_index], 
+            groups = groups, 
+            z = LAYERS['water']) # Nằm cùng z-index với nước
+
+        # 🟢 FIX TẠI ĐÂY: Căn tâm bọt 144x144 vào chính giữa ô Tile 48x48
+        tile_center_x = pos[0] + (TILE_SIZE // 2)
+        tile_center_y = pos[1] + (TILE_SIZE // 2)
+        self.rect = self.image.get_rect(center = (tile_center_x, tile_center_y))
+
+    def animate(self, dt):
+        self.frame_index += self.animation_speed * dt
+        if self.frame_index >= len(self.frames):
+            self.frame_index = 0
+            
+        # Giữ nguyên vị trí tâm khi đổi frame
+        center = self.rect.center
+        self.image = self.frames[int(self.frame_index)]
+        self.rect = self.image.get_rect(center = center)
+
+    def update(self, dt):
+        self.animate(dt)
+
 class Tree(Generic):
     def __init__(self, pos, surf, groups):
         super().__init__(pos, surf, groups)

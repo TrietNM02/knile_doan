@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ⚔️ KNIGHT TILE (GAME ROGUELIKE 2D)
 
 Đồ án Game 2D phong cách Roguelike/Turn-based được viết bằng Python & Pygame, hỗ trợ hệ thống Kỹ năng, Cây kỹ năng (Skill Tree), NPC Shop, Lưu/Tải game (Save/Load) và Hệ thống giám sát an ninh (Anti-Cheat Log).
@@ -93,3 +94,6 @@ Khi mở map ra, bạn sẽ thấy các Layer quan trọng bên góc phải:
 Hệ thống Anti-Cheat (`anticheat.py`) tự động kiểm tra chỉ số người chơi:
 * Khi khởi động game, hệ thống sẽ tự động quét file log vi phạm `game_cheat_logs.csv` (kiểm tra ngoại lệ `FileNotFoundError` và `ValueError`).
 * Nếu phát hiện chỉ số bất thường (Energy hoặc Health vượt quá mức cho phép `900.0`), game sẽ lập tức khóa truy cập và xuất file báo cáo chi tiết `anticheat_report.json`.
+=======
+
+>>>>>>> 78571cbb37a0b9309c442d86628d5701e3b99043

@@ -1,0 +1,34 @@
+{
+    "report_time": "2026-11-02 10:23:43",
+    "total_cheats_detected": 3,
+    "blacklisted_players": [
+        "PLAYER_06",
+        "PLAYER_05",
+        "PLAYER_02"
+    ],
+    "cheat_type_summary": {
+        "speedhack": 1,
+        "damagehack": 1,
+        "godmode_damage": 1
+    },
+    "detailed_incident_tuples": [
+        [
+            "PLAYER_06",
+            "speedhack",
+            95.5,
+            "10:22:30"
+        ],
+        [
+            "PLAYER_02",
+            "damagehack",
+            9999.0,
+            "10:22:30"
+        ],
+        [
+            "PLAYER_05",
+            "godmode_damage",
+            1500.0,
+            "10:22:30"
+        ]
+    ]
+}

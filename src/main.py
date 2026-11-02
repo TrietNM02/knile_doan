@@ -1,10 +1,10 @@
 import pygame, sys
-from settings import *
-from level import Level
-from menu import Menu
-from save_manager import SaveManager
-from sound_manager import SoundManager
-from anticheat import AntiCheatSystem
+from untils.settings import *
+from system.level import Level
+from ui.menu import Menu
+from core.save_manager import SaveManager
+from core.sound_manager import SoundManager
+from core.anticheat import AntiCheatSystem
 
 class Game:
     def __init__(self):
